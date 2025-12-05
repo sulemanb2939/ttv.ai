@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: lttv-ai
+    env: python
+    buildCommand: "./render-build.sh"
+    startCommand: "gunicorn -w 1 -k sync app:app"
+    plan: free
