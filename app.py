@@ -218,19 +218,32 @@ def preview():
 
     rate, pitch, volume = edge_tts_params(speed, tone)
 
-    # Preview only first 300 characters (10–20 sec approx)
     preview_text = text[:300]
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     out_path = tmp.name
     tmp.close()
 
+    async def run_preview():
+        communicate = edge_tts.Communicate(
+            text=preview_text,
+            voice=voice,
+            rate=rate,
+            pitch=pitch,
+            volume=volume
+        )
+        await communicate.save(out_path)
+
     try:
-        asyncio.run(generate_chunk(preview_text, voice, rate, pitch, volume, out_path))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_preview())
+        loop.close()
+
         return send_file(out_path, mimetype="audio/mpeg")
+
     except Exception as e:
         return f"Preview error: {e}", 500
-
 
 # ------------------------------------------
 # DOWNLOAD FINAL AUDIO
@@ -255,5 +268,6 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
