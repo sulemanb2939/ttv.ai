@@ -127,6 +127,9 @@ def start_job():
 # ------------------------------------------
 def background_worker(job_id, text, voice, speed, tone):
     try:
+        if job_id not in jobs:
+            return
+
         rate, pitch, volume = edge_tts_params(speed, tone)
 
         CHUNK_SIZE = 2000
@@ -138,7 +141,8 @@ def background_worker(job_id, text, voice, speed, tone):
 
         for i, chunk in enumerate(chunks):
 
-            if jobs[job_id]["cancel"]:
+            # Check cancel
+            if jobs.get(job_id, {}).get("cancel"):
                 jobs[job_id]["error"] = "CANCELLED"
                 return
 
@@ -146,7 +150,13 @@ def background_worker(job_id, text, voice, speed, tone):
             temp_files.append(tmp.name)
             tmp.close()
 
-            asyncio.run(generate_chunk(chunk, voice, rate, pitch, volume, tmp.name))
+            # IMPORTANT: async call inside thread – use a dedicated event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                generate_chunk(chunk, voice, rate, pitch, volume, tmp.name)
+            )
+            loop.close()
 
             # Update progress
             progress = int(((i + 1) / total_chunks) * 100)
@@ -168,18 +178,22 @@ def background_worker(job_id, text, voice, speed, tone):
 
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", result_file],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
 
         os.remove(list_file)
         for p in temp_files:
-            os.remove(p)
+            if os.path.exists(p):
+                os.remove(p)
 
         jobs[job_id]["done"] = True
         jobs[job_id]["file"] = result_file
 
     except Exception as e:
-        jobs[job_id]["error"] = str(e)
+        # Store error so /progress can show it
+        if job_id in jobs:
+            jobs[job_id]["error"] = str(e)
 
 
 # ------------------------------------------
@@ -200,6 +214,7 @@ def cancel(job_id):
     if job_id in jobs:
         jobs[job_id]["cancel"] = True
     return jsonify({"status": "OK"})
+
 
 # ------------------------------------------
 # SHORT PREVIEW (15–20 seconds)
@@ -226,6 +241,7 @@ def preview():
     tmp.close()
 
     try:
+        # Preview main thread me hai, yahan asyncio.run theek hai
         asyncio.run(generate_chunk(preview_text, voice, rate, pitch, volume, out_path))
         return send_file(out_path, mimetype="audio/mpeg")
     except Exception as e:
@@ -251,9 +267,6 @@ def download(job_id):
 # ------------------------------------------
 # RUN SERVER
 # ------------------------------------------
-import os
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
